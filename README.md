@@ -30,7 +30,6 @@ Prowl tails OpenClaw session files incrementally using byte offsets. On each fil
 
 - [Node.js](https://nodejs.org/) 18+
 - [Ollama](https://ollama.ai/) running locally (or remotely)
-- A security-oriented model pulled into Ollama (e.g. `ollama pull gpt-oss-safeguard:20b`)
 
 ## Install
 
@@ -40,6 +39,9 @@ cd prowl
 npm install
 npm run build
 npm link  # makes `prowl` available globally
+
+# Install Ollama and pull the default model
+prowl setup
 ```
 
 ## Quick start
@@ -56,6 +58,14 @@ prowl stop
 ```
 
 ## CLI
+
+### `prowl setup`
+
+Install Ollama (if needed), start the server, and pull the configured analysis model. Run this once after installing Prowl.
+
+```
+prowl setup [--model <model>]
+```
 
 ### `prowl start`
 

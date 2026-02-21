@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import path from 'node:path';
 import fs from 'node:fs';
+import { execSync, spawn as cpSpawn } from 'node:child_process';
 import { loadConfig, setConfigValue, getConfigValue } from './config.js';
 import { startDaemonBackground, stopDaemon, Daemon } from './daemon.js';
 import { StateManager } from './state.js';
@@ -43,6 +44,78 @@ program
     } else {
       await startDaemonBackground(config);
     }
+  });
+
+// --- setup ---
+program
+  .command('setup')
+  .description('Install Ollama and pull the analysis model')
+  .option('--model <model>', 'Model to pull (default: from config)')
+  .action(async (opts) => {
+    const config = loadConfig();
+    const model = opts.model ?? config.model;
+
+    // 1. Check if Ollama is installed
+    let ollamaInstalled = false;
+    try {
+      execSync('which ollama', { stdio: 'ignore' });
+      ollamaInstalled = true;
+      console.log('✓ Ollama is installed');
+    } catch {
+      console.log('Ollama is not installed.');
+      console.log('Installing via official script...\n');
+      try {
+        execSync('curl -fsSL https://ollama.com/install.sh | sh', { stdio: 'inherit' });
+        ollamaInstalled = true;
+        console.log('\n✓ Ollama installed');
+      } catch (err) {
+        console.error('\nFailed to install Ollama. Install manually from https://ollama.com');
+        process.exit(1);
+      }
+    }
+
+    // 2. Check if Ollama is running
+    const analyzer = new Analyzer(config.ollama.host, model);
+    let running = await analyzer.checkHealth();
+
+    if (!running) {
+      console.log('Ollama is not running. Starting...');
+      const child = cpSpawn('ollama', ['serve'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+
+      // Wait for it to come up
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        running = await analyzer.checkHealth();
+        if (running) break;
+      }
+
+      if (running) {
+        console.log('✓ Ollama is running');
+      } else {
+        console.error('Could not start Ollama. Try running `ollama serve` manually.');
+        process.exit(1);
+      }
+    } else {
+      console.log('✓ Ollama is running');
+    }
+
+    // 3. Pull the model
+    console.log(`\nPulling model: ${model}`);
+    console.log('This may take a while on first run...\n');
+    try {
+      execSync(`ollama pull ${model}`, { stdio: 'inherit' });
+      console.log(`\n✓ Model ${model} is ready`);
+    } catch {
+      console.error(`\nFailed to pull model ${model}.`);
+      console.error('Check that the model name is correct: ollama pull <model>');
+      process.exit(1);
+    }
+
+    console.log('\nSetup complete. Start monitoring with: prowl start');
   });
 
 // --- stop ---
