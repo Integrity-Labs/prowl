@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="prowl_logo.png" alt="Prowl" width="200" />
+</p>
+
 # Prowl
 
 Security monitor for [OpenClaw](https://github.com/anthropics/openclaw) agent session logs. Prowl watches your agent sessions in real time, runs each batch of activity through a local AI model, and alerts you when it detects suspicious behavior — prompt injection, credential exposure, data exfiltration, and more.
