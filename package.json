@@ -1,0 +1,23 @@
+{
+  "name": "prowl",
+  "version": "0.1.0",
+  "description": "Security monitor for OpenClaw agent session logs",
+  "type": "module",
+  "bin": {
+    "prowl": "./bin/prowl.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.750.0",
+    "chokidar": "^4.0.3",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3"
+  }
+}
