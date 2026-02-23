@@ -57,6 +57,18 @@ export class S3Shipper {
     }));
   }
 
+  /** One-shot upload with an explicit S3 key (no path derivation). */
+  async shipAs(filePath: string, key: string): Promise<void> {
+    const body = fs.readFileSync(filePath);
+
+    await this.client.send(new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: body,
+      ContentType: 'application/x-ndjson',
+    }));
+  }
+
   /** Append delta lines to the in-memory buffer. Flushes immediately if buffer exceeds max bytes. */
   buffer(filePath: string, lines: string[]): void {
     if (lines.length === 0) return;

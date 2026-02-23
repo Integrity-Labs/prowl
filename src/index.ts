@@ -36,8 +36,8 @@ program
     if (opts.agents) config.watch.agents = opts.agents;
     if (opts.notify) config.notify.channels = opts.notify.split(',').map((s: string) => s.trim()) as ProwlConfig['notify']['channels'];
     if (opts.s3Bucket) {
-      config.s3.enabled = true;
-      config.s3.bucket = opts.s3Bucket;
+      config.s3.logs.enabled = true;
+      config.s3.logs.bucket = opts.s3Bucket;
     }
 
     if (opts.foreground) {
@@ -225,7 +225,7 @@ program
   .action(async (file, opts) => {
     const config = loadConfig();
 
-    const bucket = opts.bucket ?? config.s3.bucket;
+    const bucket = opts.bucket ?? config.s3.logs.bucket;
     if (!bucket) {
       console.error('No bucket specified. Use --bucket or: prowl config set s3.bucket <name>');
       process.exit(1);
@@ -239,9 +239,9 @@ program
 
     const shipper = new S3Shipper({
       bucket,
-      region: opts.region ?? config.s3.region,
-      prefix: opts.prefix ?? config.s3.prefix,
-      endpoint: opts.endpoint ?? config.s3.endpoint,
+      region: opts.region ?? config.s3.logs.region,
+      prefix: opts.prefix ?? config.s3.logs.prefix,
+      endpoint: opts.endpoint ?? config.s3.logs.endpoint,
     });
 
     console.log(`Shipping ${filePath} to s3://${bucket}/...`);

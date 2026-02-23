@@ -16,13 +16,22 @@ export interface ProwlConfig {
     include_logs: boolean;
   };
   s3: {
-    enabled: boolean;
-    bucket: string | null;
-    region: string;
-    prefix: string;
-    endpoint: string | null;
-    flush_interval_s: number;
-    flush_max_bytes: number;
+    logs: {
+      enabled: boolean;
+      bucket: string | null;
+      region: string;
+      prefix: string;
+      endpoint: string | null;
+      flush_interval_s: number;
+      flush_max_bytes: number;
+    };
+    redteam: {
+      enabled: boolean;
+      bucket: string | null;
+      region: string;
+      prefix: string;
+      endpoint: string | null;
+    };
   };
   redteam: RedTeamConfig;
   state_dir: string;

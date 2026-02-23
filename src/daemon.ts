@@ -29,14 +29,14 @@ export class Daemon {
     this.analyzer = new Analyzer(config.ollama.host, config.model);
     this.alerter = new AlertDispatcher(config);
 
-    if (config.s3.enabled && config.s3.bucket) {
+    if (config.s3.logs.enabled && config.s3.logs.bucket) {
       this.shipper = new S3Shipper({
-        bucket: config.s3.bucket,
-        region: config.s3.region,
-        prefix: config.s3.prefix,
-        endpoint: config.s3.endpoint,
-        flush_interval_s: config.s3.flush_interval_s,
-        flush_max_bytes: config.s3.flush_max_bytes,
+        bucket: config.s3.logs.bucket,
+        region: config.s3.logs.region,
+        prefix: config.s3.logs.prefix,
+        endpoint: config.s3.logs.endpoint,
+        flush_interval_s: config.s3.logs.flush_interval_s,
+        flush_max_bytes: config.s3.logs.flush_max_bytes,
         onError: (err) => this.state.log(`S3 flush error: ${err}`),
       });
     }
@@ -71,7 +71,7 @@ export class Daemon {
     console.log(`  Notify: ${this.config.notify.channels.join(', ')}`);
     console.log(`  Min severity: ${this.config.notify.min_severity}`);
     if (this.shipper) {
-      console.log(`  S3: ${this.config.s3.bucket} (${this.config.s3.region})`);
+      console.log(`  S3: ${this.config.s3.logs.bucket} (${this.config.s3.logs.region})`);
     }
     console.log('');
 
