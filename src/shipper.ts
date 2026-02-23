@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { loadPublicKey, encrypt } from './crypto.js';
 
 interface BufferEntry {
   lines: string[];
@@ -14,6 +15,7 @@ export class S3Shipper {
   private flushIntervalMs: number;
   private flushMaxBytes: number;
   private onError: ((err: unknown) => void) | null;
+  private publicKey: Buffer | null = null;
   private buffers: Map<string, BufferEntry> = new Map();
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -24,6 +26,7 @@ export class S3Shipper {
     endpoint?: string | null;
     flush_interval_s?: number;
     flush_max_bytes?: number;
+    publicKeyPath?: string | null;
     onError?: (err: unknown) => void;
   }) {
     this.bucket = opts.bucket;
@@ -31,6 +34,15 @@ export class S3Shipper {
     this.flushIntervalMs = (opts.flush_interval_s ?? 60) * 1000;
     this.flushMaxBytes = opts.flush_max_bytes ?? 262144;
     this.onError = opts.onError ?? null;
+
+    if (opts.publicKeyPath) {
+      try {
+        this.publicKey = loadPublicKey(opts.publicKeyPath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`Warning: could not load public key: ${msg} — shipping unencrypted`);
+      }
+    }
 
     const clientOpts: ConstructorParameters<typeof S3Client>[0] = {
       region: opts.region,
@@ -44,28 +56,47 @@ export class S3Shipper {
     this.client = new S3Client(clientOpts);
   }
 
+  /** Returns whether client-side encryption is active. */
+  get encrypted(): boolean {
+    return this.publicKey !== null;
+  }
+
+  /** Encrypt body if a public key is configured. Returns the body, content type, and key suffix. */
+  private prepareBody(body: Buffer | string): { body: Buffer | string; contentType: string; suffix: string } {
+    if (!this.publicKey) {
+      return { body, contentType: 'application/x-ndjson', suffix: '' };
+    }
+    return {
+      body: encrypt(typeof body === 'string' ? Buffer.from(body, 'utf-8') : body, this.publicKey),
+      contentType: 'application/octet-stream',
+      suffix: '.enc',
+    };
+  }
+
   /** One-shot full-file upload (used by `prowl ship <file>` CLI command). */
   async ship(filePath: string): Promise<void> {
-    const body = fs.readFileSync(filePath);
-    const key = this.buildKey(filePath);
+    const raw = fs.readFileSync(filePath);
+    const { body, contentType, suffix } = this.prepareBody(raw);
+    const key = this.buildKey(filePath) + suffix;
 
     await this.client.send(new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
       Body: body,
-      ContentType: 'application/x-ndjson',
+      ContentType: contentType,
     }));
   }
 
   /** One-shot upload with an explicit S3 key (no path derivation). */
   async shipAs(filePath: string, key: string): Promise<void> {
-    const body = fs.readFileSync(filePath);
+    const raw = fs.readFileSync(filePath);
+    const { body, contentType, suffix } = this.prepareBody(raw);
 
     await this.client.send(new PutObjectCommand({
       Bucket: this.bucket,
-      Key: key,
+      Key: key + suffix,
       Body: body,
-      ContentType: 'application/x-ndjson',
+      ContentType: contentType,
     }));
   }
 
@@ -99,14 +130,15 @@ export class S3Shipper {
     const lines = entry.lines;
     this.buffers.set(filePath, { lines: [], bytes: 0 });
 
-    const body = lines.join('\n') + '\n';
-    const key = this.buildChunkKey(filePath);
+    const raw = lines.join('\n') + '\n';
+    const { body, contentType, suffix } = this.prepareBody(raw);
+    const key = this.buildChunkKey(filePath) + suffix;
 
     await this.client.send(new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
       Body: body,
-      ContentType: 'application/x-ndjson',
+      ContentType: contentType,
     }));
   }
 

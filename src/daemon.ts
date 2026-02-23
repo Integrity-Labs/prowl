@@ -38,6 +38,7 @@ export class Daemon {
         endpoint: config.s3.logs.endpoint,
         flush_interval_s: config.s3.logs.flush_interval_s,
         flush_max_bytes: config.s3.logs.flush_max_bytes,
+        publicKeyPath: config.s3.logs.public_key,
         onError: (err) => this.state.log(`S3 flush error: ${err}`),
       });
     }

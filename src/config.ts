@@ -31,6 +31,7 @@ const DEFAULT_CONFIG: ProwlConfig = {
       endpoint: null,
       flush_interval_s: 60,
       flush_max_bytes: 262144,
+      public_key: null,
     },
     redteam: {
       enabled: false,
@@ -38,6 +39,7 @@ const DEFAULT_CONFIG: ProwlConfig = {
       region: 'auto',
       prefix: 'prowl/',
       endpoint: null,
+      public_key: null,
     },
   },
   watchdog: {
@@ -152,6 +154,16 @@ function validateConfig(config: ProwlConfig): ProwlConfig {
   }
   if (config.s3.logs.flush_interval_s < 5) config.s3.logs.flush_interval_s = 5;
   if (config.s3.logs.flush_max_bytes < 1024) config.s3.logs.flush_max_bytes = 1024;
+
+  // Validate public key paths
+  if (config.s3.logs.public_key && !fs.existsSync(config.s3.logs.public_key)) {
+    console.warn(`Warning: s3.logs.public_key file not found: ${config.s3.logs.public_key} — encryption disabled`);
+    config.s3.logs.public_key = null;
+  }
+  if (config.s3.redteam.public_key && !fs.existsSync(config.s3.redteam.public_key)) {
+    console.warn(`Warning: s3.redteam.public_key file not found: ${config.s3.redteam.public_key} — encryption disabled`);
+    config.s3.redteam.public_key = null;
+  }
 
   // Watchdog validation
   if (config.watchdog) {

@@ -69,10 +69,25 @@ export class AlertDispatcher {
   private async notifyMacOS(alert: Alert): Promise<void> {
     const title = `Prowl [${alert.verdict.severity.toUpperCase()}]`;
     const message = alert.verdict.summary;
-    const script = `display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)} sound name "Sosumi"`;
 
     return new Promise<void>((resolve) => {
-      execFile('osascript', ['-e', script], () => resolve());
+      // terminal-notifier sends persistent alerts that stay in Notification Center
+      execFile('terminal-notifier', [
+        '-title', title,
+        '-message', message,
+        '-subtitle', alert.verdict.category,
+        '-sound', 'Sosumi',
+        '-group', `prowl-${alert.verdict.session_id}`,
+        '-ignoreDnD',
+      ], (err) => {
+        if (err) {
+          // Fall back to osascript if terminal-notifier is not available
+          const script = `display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)} sound name "Sosumi"`;
+          execFile('osascript', ['-e', script], () => resolve());
+        } else {
+          resolve();
+        }
+      });
     });
   }
 

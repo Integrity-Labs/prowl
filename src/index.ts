@@ -9,6 +9,7 @@ import { Analyzer } from './analyzer.js';
 import { readNewLines, parseEvents, extractRelevantContent, batchLines, extractSessionId } from './processor.js';
 import { formatAlertForDisplay } from './alerter.js';
 import { S3Shipper } from './shipper.js';
+import { generateKeyPair, loadPrivateKey, decrypt } from './crypto.js';
 import { RedTeamRunner } from './redteam/runner.js';
 import { RedTeamGenerator } from './redteam/generator.js';
 import { generatePdfReport } from './redteam/pdf.js';
@@ -245,6 +246,78 @@ program
     }
   });
 
+// --- keygen ---
+program
+  .command('keygen')
+  .description('Generate an X25519 keypair for S3 encryption')
+  .option('--out <dir>', 'Output directory', '.')
+  .action((opts) => {
+    const outDir = path.resolve(opts.out);
+    fs.mkdirSync(outDir, { recursive: true });
+
+    const pubPath = path.join(outDir, 'prowl.pub');
+    const keyPath = path.join(outDir, 'prowl.key');
+
+    if (fs.existsSync(keyPath)) {
+      console.error(`Private key already exists: ${keyPath}`);
+      console.error('Remove it first if you want to regenerate.');
+      process.exit(1);
+    }
+
+    const kp = generateKeyPair();
+    fs.writeFileSync(pubPath, kp.publicKey.toString('hex') + '\n');
+    fs.writeFileSync(keyPath, kp.privateKey.toString('hex') + '\n', { mode: 0o600 });
+
+    console.log(`Public key:  ${pubPath}`);
+    console.log(`Private key: ${keyPath} (mode 0600)`);
+    console.log('');
+    console.log('To enable encryption, add the public key path to your config:');
+    console.log(`  prowl config set s3.logs.public_key '"${pubPath}"'`);
+    console.log(`  prowl config set s3.redteam.public_key '"${pubPath}"'`);
+    console.log('');
+    console.log('Keep prowl.key offline — it is needed to decrypt shipped files.');
+  });
+
+// --- decrypt ---
+program
+  .command('decrypt <file>')
+  .description('Decrypt an .enc file shipped by Prowl')
+  .requiredOption('--key <path>', 'Path to prowl.key (private key)')
+  .option('--out <path>', 'Output path (default: strip .enc suffix)')
+  .action((file, opts) => {
+    const filePath = path.resolve(file);
+    if (!fs.existsSync(filePath)) {
+      console.error(`File not found: ${filePath}`);
+      process.exit(1);
+    }
+
+    const keyPath = path.resolve(opts.key);
+    if (!fs.existsSync(keyPath)) {
+      console.error(`Key file not found: ${keyPath}`);
+      process.exit(1);
+    }
+
+    let outPath: string;
+    if (opts.out) {
+      outPath = path.resolve(opts.out);
+    } else if (filePath.endsWith('.enc')) {
+      outPath = filePath.slice(0, -4);
+    } else {
+      outPath = filePath + '.dec';
+    }
+
+    try {
+      const privKey = loadPrivateKey(keyPath);
+      const encrypted = fs.readFileSync(filePath);
+      const plaintext = decrypt(encrypted, privKey);
+      fs.writeFileSync(outPath, plaintext);
+      console.log(`Decrypted: ${outPath}`);
+    } catch (err) {
+      console.error('Decryption failed:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
+  });
+
 // --- ship ---
 program
   .command('ship <file>')
@@ -273,8 +346,12 @@ program
       region: opts.region ?? config.s3.logs.region,
       prefix: opts.prefix ?? config.s3.logs.prefix,
       endpoint: opts.endpoint ?? config.s3.logs.endpoint,
+      publicKeyPath: config.s3.logs.public_key,
     });
 
+    if (shipper.encrypted) {
+      console.log('Encryption: active (X25519 + AES-256-GCM)');
+    }
     console.log(`Shipping ${filePath} to s3://${bucket}/...`);
     try {
       await shipper.ship(filePath);

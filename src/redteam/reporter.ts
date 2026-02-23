@@ -21,6 +21,7 @@ export class RedTeamReporter {
           region: config.s3.redteam.region,
           prefix: config.s3.redteam.prefix,
           endpoint: config.s3.redteam.endpoint,
+          publicKeyPath: config.s3.redteam.public_key,
         })
       : null;
   }

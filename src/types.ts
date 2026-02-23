@@ -24,6 +24,7 @@ export interface ProwlConfig {
       endpoint: string | null;
       flush_interval_s: number;
       flush_max_bytes: number;
+      public_key: string | null;
     };
     redteam: {
       enabled: boolean;
@@ -31,6 +32,7 @@ export interface ProwlConfig {
       region: string;
       prefix: string;
       endpoint: string | null;
+      public_key: string | null;
     };
   };
   watchdog: {
