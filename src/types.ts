@@ -33,6 +33,14 @@ export interface ProwlConfig {
       endpoint: string | null;
     };
   };
+  watchdog: {
+    enabled: boolean;
+    heartbeat_interval_s: number;
+    staleness_threshold_s: number;
+    poll_interval_s: number;
+    max_respawns: number;
+    crash_window_s: number;
+  };
   redteam: RedTeamConfig;
   state_dir: string;
 }
@@ -210,4 +218,10 @@ export interface DaemonStatus {
   filesWatched?: number;
   alertsToday?: number;
   uptime?: number;
+  watchdog?: {
+    running: boolean;
+    pid?: number;
+  };
+  heartbeatAge?: number;
+  crashLoop?: boolean;
 }

@@ -14,6 +14,11 @@ export class StateManager {
   private usageLogPath: string;
   private pidPath: string;
   private logPath: string;
+  private heartbeatPath: string;
+  private heartbeatTmpPath: string;
+  private watchdogPidPath: string;
+  private stopSentinelPath: string;
+  private crashLoopPath: string;
 
   constructor(stateDir: string) {
     this.stateDir = stateDir;
@@ -23,6 +28,11 @@ export class StateManager {
     this.usageLogPath = path.join(stateDir, 'usage.jsonl');
     this.pidPath = path.join(stateDir, 'prowl.pid');
     this.logPath = path.join(stateDir, 'prowl.log');
+    this.heartbeatPath = path.join(stateDir, 'heartbeat');
+    this.heartbeatTmpPath = path.join(stateDir, 'heartbeat.tmp');
+    this.watchdogPidPath = path.join(stateDir, 'watchdog.pid');
+    this.stopSentinelPath = path.join(stateDir, 'prowl.stopped');
+    this.crashLoopPath = path.join(stateDir, 'prowl.crashloop');
     fs.mkdirSync(stateDir, { recursive: true });
   }
 
@@ -206,5 +216,82 @@ export class StateManager {
       total.requests += s.requests;
     }
     return total;
+  }
+
+  // --- Heartbeat ---
+
+  writeHeartbeat(): void {
+    fs.writeFileSync(this.heartbeatTmpPath, String(Date.now()));
+    fs.renameSync(this.heartbeatTmpPath, this.heartbeatPath);
+  }
+
+  readHeartbeat(): number | null {
+    if (!fs.existsSync(this.heartbeatPath)) return null;
+    try {
+      const ts = parseInt(fs.readFileSync(this.heartbeatPath, 'utf-8').trim(), 10);
+      return isNaN(ts) ? null : ts;
+    } catch {
+      return null;
+    }
+  }
+
+  removeHeartbeat(): void {
+    if (fs.existsSync(this.heartbeatPath)) fs.unlinkSync(this.heartbeatPath);
+    if (fs.existsSync(this.heartbeatTmpPath)) fs.unlinkSync(this.heartbeatTmpPath);
+  }
+
+  // --- Watchdog PID ---
+
+  writeWatchdogPid(pid: number): void {
+    fs.writeFileSync(this.watchdogPidPath, String(pid));
+  }
+
+  readWatchdogPid(): number | null {
+    if (!fs.existsSync(this.watchdogPidPath)) return null;
+    const pid = parseInt(fs.readFileSync(this.watchdogPidPath, 'utf-8').trim(), 10);
+    return isNaN(pid) ? null : pid;
+  }
+
+  removeWatchdogPid(): void {
+    if (fs.existsSync(this.watchdogPidPath)) fs.unlinkSync(this.watchdogPidPath);
+  }
+
+  isWatchdogRunning(): boolean {
+    const pid = this.readWatchdogPid();
+    if (pid === null) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // --- Stop sentinel ---
+
+  writeStopSentinel(): void {
+    fs.writeFileSync(this.stopSentinelPath, String(Date.now()));
+  }
+
+  hasStopSentinel(): boolean {
+    return fs.existsSync(this.stopSentinelPath);
+  }
+
+  removeStopSentinel(): void {
+    if (fs.existsSync(this.stopSentinelPath)) fs.unlinkSync(this.stopSentinelPath);
+  }
+
+  // --- Crash-loop marker ---
+
+  writeCrashLoopMarker(): void {
+    fs.writeFileSync(this.crashLoopPath, new Date().toISOString());
+  }
+
+  hasCrashLoopMarker(): boolean {
+    return fs.existsSync(this.crashLoopPath);
+  }
+
+  removeCrashLoopMarker(): void {
+    if (fs.existsSync(this.crashLoopPath)) fs.unlinkSync(this.crashLoopPath);
   }
 }

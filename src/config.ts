@@ -40,6 +40,14 @@ const DEFAULT_CONFIG: ProwlConfig = {
       endpoint: null,
     },
   },
+  watchdog: {
+    enabled: true,
+    heartbeat_interval_s: 5,
+    staleness_threshold_s: 15,
+    poll_interval_s: 5,
+    max_respawns: 3,
+    crash_window_s: 60,
+  },
   redteam: {
     categories: [
       'prompt_injection',
@@ -144,6 +152,17 @@ function validateConfig(config: ProwlConfig): ProwlConfig {
   }
   if (config.s3.logs.flush_interval_s < 5) config.s3.logs.flush_interval_s = 5;
   if (config.s3.logs.flush_max_bytes < 1024) config.s3.logs.flush_max_bytes = 1024;
+
+  // Watchdog validation
+  if (config.watchdog) {
+    if (config.watchdog.heartbeat_interval_s < 1) config.watchdog.heartbeat_interval_s = 1;
+    if (config.watchdog.staleness_threshold_s < config.watchdog.heartbeat_interval_s * 2) {
+      config.watchdog.staleness_threshold_s = config.watchdog.heartbeat_interval_s * 2;
+    }
+    if (config.watchdog.poll_interval_s < 1) config.watchdog.poll_interval_s = 1;
+    if (config.watchdog.max_respawns < 1) config.watchdog.max_respawns = 1;
+    if (config.watchdog.crash_window_s < 1) config.watchdog.crash_window_s = 1;
+  }
 
   // Red-team validation
   if (config.redteam) {

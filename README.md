@@ -80,6 +80,7 @@ Options:
   --notify <channels>    Comma-separated notification channels
   --foreground           Run in foreground with verbose output
   --s3-bucket <bucket>   Enable S3 shipping to this bucket
+  --no-watchdog          Disable the watchdog process
 ```
 
 ### `prowl stop`
@@ -88,7 +89,7 @@ Stop the background daemon.
 
 ### `prowl status`
 
-Show whether the daemon is running, current config, and today's alert count.
+Show whether the daemon is running, current config, today's alert count, watchdog status, and heartbeat age.
 
 ### `prowl scan <file>`
 
@@ -142,7 +143,7 @@ Get and set configuration values using dot notation.
 prowl config get
 prowl config get notify.channels
 prowl config set notify.min_severity high
-prowl config set s3.bucket my-bucket
+prowl config set s3.logs.bucket my-bucket
 ```
 
 ## Configuration
@@ -161,11 +162,13 @@ Config lives at `~/.prowl/config.json`. All values can be set via `prowl config 
 | `notify.webhook.url` | `null` | Webhook URL for alert delivery |
 | `scan.batch_lines` | `20` | Lines per analysis batch |
 | `scan.include_logs` | `true` | Also watch `~/.openclaw/logs/` |
-| `s3.enabled` | `false` | Enable S3 log shipping |
-| `s3.bucket` | `null` | S3 bucket name |
-| `s3.region` | `auto` | AWS region |
-| `s3.prefix` | `prowl/` | S3 key prefix |
-| `s3.endpoint` | `null` | Custom S3 endpoint for R2, MinIO, etc. |
+| `s3.logs.enabled` | `false` | Enable S3 log shipping |
+| `s3.logs.bucket` | `null` | S3 bucket name |
+| `s3.logs.region` | `auto` | AWS region |
+| `s3.logs.prefix` | `prowl/` | S3 key prefix |
+| `s3.logs.endpoint` | `null` | Custom S3 endpoint for R2, MinIO, etc. |
+| `s3.logs.flush_interval_s` | `60` | Seconds between batch flushes |
+| `s3.logs.flush_max_bytes` | `262144` | Byte threshold to trigger a flush (256KB) |
 | `state_dir` | `~/.prowl` | Directory for state files |
 
 ## Threat detection
@@ -202,36 +205,38 @@ prowl config set notify.min_severity high
 
 ## S3 log shipping
 
-Ship raw session files to S3 for compliance, forensics, or SIEM ingestion. Files are uploaded in full on each change (session files are small, typically <200KB).
+Ship raw session logs to S3 for compliance, forensics, or SIEM ingestion. Logs are buffered in memory and flushed in batches to reduce PUT request costs. A flush occurs when either the time interval or byte threshold is reached.
 
 **S3 key structure:** `{prefix}{agent}/{sessionId}.jsonl`
 Example: `prowl/main/845b9348-48e8-40e8-a156-1e13b66ea628.jsonl`
+
+S3 config is under `s3.logs`:
 
 ### AWS S3
 
 ```bash
 export AWS_ACCESS_KEY_ID=...
 export AWS_SECRET_ACCESS_KEY=...
-prowl config set s3.enabled true
-prowl config set s3.bucket my-security-logs
-prowl config set s3.region us-east-1
+prowl config set s3.logs.enabled true
+prowl config set s3.logs.bucket my-security-logs
+prowl config set s3.logs.region us-east-1
 prowl start
 ```
 
 ### Cloudflare R2
 
 ```bash
-prowl config set s3.endpoint https://<account-id>.r2.cloudflarestorage.com
-prowl config set s3.bucket my-bucket
-prowl config set s3.enabled true
+prowl config set s3.logs.endpoint https://<account-id>.r2.cloudflarestorage.com
+prowl config set s3.logs.bucket my-bucket
+prowl config set s3.logs.enabled true
 ```
 
 ### MinIO
 
 ```bash
-prowl config set s3.endpoint http://localhost:9000
-prowl config set s3.bucket my-bucket
-prowl config set s3.enabled true
+prowl config set s3.logs.endpoint http://localhost:9000
+prowl config set s3.logs.bucket my-bucket
+prowl config set s3.logs.enabled true
 ```
 
 Or use `--s3-bucket` on start for quick one-off use:
@@ -239,6 +244,29 @@ Or use `--s3-bucket` on start for quick one-off use:
 ```bash
 prowl start --s3-bucket my-bucket
 ```
+
+### Tuning flush behavior
+
+```bash
+prowl config set s3.logs.flush_interval_s 30   # flush every 30s (default: 60)
+prowl config set s3.logs.flush_max_bytes 131072 # flush at 128KB (default: 256KB)
+```
+
+## Watchdog
+
+By default, Prowl spawns a watchdog process alongside the daemon. The watchdog monitors the daemon's heartbeat and automatically restarts it if it becomes unresponsive. If the daemon crashes repeatedly (3 times within 60 seconds), the watchdog stops and marks a crash-loop.
+
+- `prowl status` shows watchdog and heartbeat information
+- `prowl start --no-watchdog` disables the watchdog
+
+| Config key | Default | Description |
+|------------|---------|-------------|
+| `watchdog.enabled` | `true` | Enable watchdog process |
+| `watchdog.heartbeat_interval_s` | `5` | How often the daemon writes a heartbeat |
+| `watchdog.staleness_threshold_s` | `15` | Seconds before heartbeat is considered stale |
+| `watchdog.poll_interval_s` | `5` | How often the watchdog checks the heartbeat |
+| `watchdog.max_respawns` | `3` | Max respawns within the crash window |
+| `watchdog.crash_window_s` | `60` | Time window for crash-loop detection |
 
 ## State directory
 
@@ -252,7 +280,10 @@ Prowl stores its state in `~/.prowl/`:
 ├── usage.json       # token usage by session
 ├── usage.jsonl      # time-series usage log
 ├── prowl.pid        # daemon PID
-└── prowl.log        # daemon log
+├── watchdog.pid     # watchdog PID
+├── heartbeat        # daemon heartbeat timestamp
+├── prowl.log        # daemon log
+└── crash-loop       # crash-loop marker (created by watchdog)
 ```
 
 ## Example alert output
@@ -282,6 +313,14 @@ ollama pull gpt-oss-safeguard:20b
 If a previous daemon crashed without cleaning up, remove the stale PID file:
 ```bash
 rm ~/.prowl/prowl.pid
+prowl start
+```
+
+**Crash-loop detected**
+The watchdog stops restarting the daemon after repeated crashes. Clear the marker and investigate the daemon log:
+```bash
+rm ~/.prowl/crash-loop
+cat ~/.prowl/prowl.log
 prowl start
 ```
 

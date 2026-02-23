@@ -21,6 +21,7 @@ export class Daemon {
   private queue: string[] = [];
   private verbose: boolean;
   private shipper: S3Shipper | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: ProwlConfig, opts?: { verbose?: boolean }) {
     this.config = config;
@@ -65,6 +66,15 @@ export class Daemon {
       this.shipper.startFlushing();
     }
 
+    // Start heartbeat for watchdog
+    if (this.config.watchdog.enabled) {
+      this.state.writeHeartbeat();
+      this.heartbeatTimer = setInterval(
+        () => this.state.writeHeartbeat(),
+        this.config.watchdog.heartbeat_interval_s * 1000,
+      );
+    }
+
     console.log(`Prowl daemon running (pid=${process.pid})`);
     console.log(`  Model: ${this.config.model}`);
     console.log(`  Ollama: ${this.config.ollama.host}`);
@@ -82,6 +92,11 @@ export class Daemon {
       shuttingDown = true;
       this.state.log('Daemon shutting down');
       console.log('\nShutting down Prowl...');
+      if (this.heartbeatTimer) {
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = null;
+      }
+      this.state.removeHeartbeat();
       this.watcher?.stop();
       // Wait for in-flight processing to finish
       while (this.processing) {
@@ -262,7 +277,7 @@ export class Daemon {
   }
 }
 
-export async function startDaemonBackground(config: ProwlConfig): Promise<number> {
+export async function startDaemonBackground(config: ProwlConfig, opts?: { skipWatchdog?: boolean }): Promise<number> {
   const state = new StateManager(config.state_dir);
 
   if (state.isRunning()) {
@@ -270,6 +285,10 @@ export async function startDaemonBackground(config: ProwlConfig): Promise<number
     console.log(`Prowl is already running (pid=${pid})`);
     process.exit(1);
   }
+
+  // Clear stale crash-loop marker on explicit start
+  state.removeCrashLoopMarker();
+  state.removeStopSentinel();
 
   const thisFile = fileURLToPath(import.meta.url);
   const entryPoint = path.resolve(path.dirname(thisFile), 'daemon-entry.js');
@@ -307,7 +326,40 @@ export async function startDaemonBackground(config: ProwlConfig): Promise<number
     process.exit(1);
   }
 
+  // Spawn watchdog process
+  if (config.watchdog.enabled && !opts?.skipWatchdog) {
+    await spawnWatchdog(config, state);
+  }
+
   return pid;
+}
+
+async function spawnWatchdog(config: ProwlConfig, state: StateManager): Promise<void> {
+  if (state.isWatchdogRunning()) return;
+
+  const thisFile = fileURLToPath(import.meta.url);
+  const watchdogEntry = path.resolve(path.dirname(thisFile), 'watchdog-entry.js');
+
+  const logPath = state.getLogPath();
+  const logFd = fs.openSync(logPath, 'a');
+
+  let child;
+  try {
+    child = spawn(process.execPath, [watchdogEntry], {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: { ...process.env, PROWL_CONFIG: JSON.stringify(config) },
+    });
+  } finally {
+    fs.closeSync(logFd);
+  }
+
+  child.unref();
+
+  if (child.pid) {
+    state.writeWatchdogPid(child.pid);
+    console.log(`  Watchdog started (pid=${child.pid})`);
+  }
 }
 
 export function stopDaemon(stateDir: string): void {
@@ -317,8 +369,13 @@ export function stopDaemon(stateDir: string): void {
   if (pid === null || !state.isRunning()) {
     console.log('Prowl is not running.');
     state.removePid();
+    // Still clean up watchdog if running
+    stopWatchdog(state);
     return;
   }
+
+  // Write stop sentinel so watchdog knows this is intentional
+  state.writeStopSentinel();
 
   try {
     process.kill(pid, 'SIGTERM');
@@ -334,11 +391,34 @@ export function stopDaemon(stateDir: string): void {
           try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
         }
         state.removePid();
+        state.removeHeartbeat();
         console.log('Prowl stopped.');
+
+        // Stop watchdog after daemon is down
+        stopWatchdog(state);
+
+        // Clean up sentinel
+        state.removeStopSentinel();
       }
     }, 500);
   } catch {
     console.log('Prowl process not found. Cleaning up PID file.');
     state.removePid();
+    state.removeHeartbeat();
+    stopWatchdog(state);
+    state.removeStopSentinel();
   }
+}
+
+function stopWatchdog(state: StateManager): void {
+  const wdPid = state.readWatchdogPid();
+  if (wdPid === null) return;
+
+  if (state.isWatchdogRunning()) {
+    try {
+      process.kill(wdPid, 'SIGTERM');
+      console.log(`Sent SIGTERM to watchdog (pid=${wdPid})`);
+    } catch { /* already dead */ }
+  }
+  state.removeWatchdogPid();
 }

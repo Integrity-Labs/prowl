@@ -11,6 +11,8 @@ import { formatAlertForDisplay } from './alerter.js';
 import { S3Shipper } from './shipper.js';
 import { RedTeamRunner } from './redteam/runner.js';
 import { RedTeamGenerator } from './redteam/generator.js';
+import { generatePdfReport } from './redteam/pdf.js';
+import { uploadPdfReport } from './redteam/uploader.js';
 import type { ProwlConfig, AttackCategoryId } from './types.js';
 
 const program = new Command();
@@ -29,6 +31,7 @@ program
   .option('--notify <channels>', 'Comma-separated notification channels')
   .option('--foreground', 'Run in foreground (do not daemonize)')
   .option('--s3-bucket <bucket>', 'Enable S3 shipping to this bucket')
+  .option('--no-watchdog', 'Disable watchdog process')
   .action(async (opts) => {
     const config = loadConfig();
 
@@ -38,6 +41,9 @@ program
     if (opts.s3Bucket) {
       config.s3.logs.enabled = true;
       config.s3.logs.bucket = opts.s3Bucket;
+    }
+    if (opts.watchdog === false) {
+      config.watchdog.enabled = false;
     }
 
     if (opts.foreground) {
@@ -152,6 +158,31 @@ program
       if (alertsToday > 0) {
         console.log(`  Alerts today: ${alertsToday}`);
       }
+    }
+
+    // Watchdog status
+    const wdPid = state.readWatchdogPid();
+    const wdRunning = state.isWatchdogRunning();
+    if (wdRunning) {
+      console.log(`  Watchdog: running (pid=${wdPid})`);
+    } else if (config.watchdog.enabled) {
+      console.log('  Watchdog: not running');
+    } else {
+      console.log('  Watchdog: disabled');
+    }
+
+    // Heartbeat status
+    const heartbeat = state.readHeartbeat();
+    if (heartbeat !== null) {
+      const ageS = Math.round((Date.now() - heartbeat) / 1000);
+      console.log(`  Heartbeat: ${ageS}s ago`);
+    } else if (running) {
+      console.log('  Heartbeat: none');
+    }
+
+    // Crash-loop status
+    if (state.hasCrashLoopMarker()) {
+      console.log('  Crash-loop: DETECTED (clear with `prowl start`)');
     }
   });
 
@@ -445,6 +476,9 @@ program
   .option('--local', 'Force local mode (default)')
   .option('--no-local', 'Disable local mode')
   .option('--json', 'Output results as JSON')
+  .option('--pdf <path>', 'Export report as PDF')
+  .option('--upload <url>', 'Upload PDF report to API at this base URL')
+  .option('--api-key <key>', 'API key for upload (or set PROWL_API_KEY)')
   .option('--verbose', 'Verbose output')
   .action(async (opts) => {
     const config = loadConfig();
@@ -484,6 +518,29 @@ program
     } else {
       const report = await runner.runOnce();
       runner.printSummary(report);
+      if (opts.pdf) {
+        await generatePdfReport(report, opts.pdf);
+        console.log(`PDF report saved to ${path.resolve(opts.pdf)}`);
+      }
+      if (opts.upload) {
+        if (!opts.pdf) {
+          console.error('--upload requires --pdf to generate a report first');
+          process.exit(1);
+        }
+        const apiKey = opts.apiKey ?? process.env.PROWL_API_KEY;
+        if (!apiKey) {
+          console.error('Upload requires --api-key or PROWL_API_KEY environment variable');
+          process.exit(1);
+        }
+        const key = await uploadPdfReport({
+          baseUrl: opts.upload,
+          apiKey,
+          agentCodeName: report.target_agent,
+          defenseScore: report.defense_score,
+          pdfPath: path.resolve(opts.pdf),
+        });
+        console.log(`Report uploaded to ${key}`);
+      }
       process.exit(report.successful_attacks > 0 ? 1 : 0);
     }
   });
