@@ -8,12 +8,16 @@ export class AlertDispatcher {
   private channels: NotifyChannel[];
   private minSeverity: Severity;
   private webhookUrl: string | null;
+  private ntfyUrl: string | null;
+  private ntfyToken: string | null;
   private tailListeners: Set<AlertCallback> = new Set();
 
   constructor(config: ProwlConfig) {
     this.channels = config.notify.channels;
     this.minSeverity = config.notify.min_severity;
     this.webhookUrl = config.notify.webhook.url;
+    this.ntfyUrl = config.notify.ntfy.url;
+    this.ntfyToken = config.notify.ntfy.token;
   }
 
   onTail(cb: AlertCallback): () => void {
@@ -41,6 +45,9 @@ export class AlertDispatcher {
           break;
         case 'webhook':
           promises.push(this.notifyWebhook(alert));
+          break;
+        case 'ntfy':
+          promises.push(this.notifyNtfy(alert));
           break;
       }
     }
@@ -106,6 +113,49 @@ export class AlertDispatcher {
       });
     } catch (err) {
       console.error(`Webhook delivery failed: ${err}`);
+    }
+  }
+
+  private async notifyNtfy(alert: Alert): Promise<void> {
+    if (!this.ntfyUrl) return;
+
+    const severityPriority: Record<Severity, string> = {
+      low: '2',
+      medium: '3',
+      high: '4',
+      critical: '5',
+    };
+    const severityTag: Record<Severity, string> = {
+      low: 'warning',
+      medium: 'warning',
+      high: 'rotating_light',
+      critical: 'rotating_light',
+    };
+
+    const sev = alert.verdict.severity;
+    const headers: Record<string, string> = {
+      'Title': `Prowl [${sev.toUpperCase()}]`,
+      'Tags': severityTag[sev],
+      'Priority': severityPriority[sev],
+    };
+    if (this.ntfyToken) {
+      headers['Authorization'] = `Bearer ${this.ntfyToken}`;
+    }
+
+    const body =
+      `${alert.verdict.summary}\n` +
+      `Session: ${alert.verdict.session_id}\n` +
+      `Category: ${alert.verdict.category}\n` +
+      `Indicators: ${alert.verdict.indicators.join(', ')}`;
+
+    try {
+      await fetch(this.ntfyUrl, {
+        method: 'POST',
+        headers,
+        body,
+      });
+    } catch (err) {
+      console.error(`ntfy delivery failed: ${err}`);
     }
   }
 }

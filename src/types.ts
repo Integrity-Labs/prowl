@@ -10,6 +10,7 @@ export interface ProwlConfig {
     channels: NotifyChannel[];
     min_severity: Severity;
     webhook: { url: string | null };
+    ntfy: { url: string | null; token: string | null };
   };
   scan: {
     batch_lines: number;
@@ -47,7 +48,7 @@ export interface ProwlConfig {
   state_dir: string;
 }
 
-export type NotifyChannel = 'stdout' | 'macos' | 'openclaw' | 'webhook';
+export type NotifyChannel = 'stdout' | 'macos' | 'openclaw' | 'webhook' | 'ntfy';
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 
 export const SEVERITY_ORDER: Record<Severity, number> = {

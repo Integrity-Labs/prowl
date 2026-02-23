@@ -17,6 +17,7 @@ const DEFAULT_CONFIG: ProwlConfig = {
     channels: ['stdout'],
     min_severity: 'medium',
     webhook: { url: null },
+    ntfy: { url: null, token: null },
   },
   scan: {
     batch_lines: 20,

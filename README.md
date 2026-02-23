@@ -15,7 +15,7 @@ Everything runs locally. No data leaves your machine unless you configure S3 shi
         │
         ▼
    ┌─────────┐     ┌──────────┐     ┌──────────┐
-   │ Watcher  │────▶│ Analyzer │────▶│ Alerter  │──▶ stdout, macOS, webhook
+   │ Watcher  │────▶│ Analyzer │────▶│ Alerter  │──▶ stdout, macOS, webhook, ntfy
    └─────────┘     └──────────┘     └──────────┘
         │               │
         ▼               ▼
@@ -157,9 +157,11 @@ Config lives at `~/.prowl/config.json`. All values can be set via `prowl config 
 | `watch.agents` | `*` | Agent names to watch (`*` = all) |
 | `watch.include_deleted` | `false` | Include `.deleted` session files |
 | `watch.debounce_ms` | `2000` | Debounce delay for file changes (ms) |
-| `notify.channels` | `["stdout"]` | Alert channels: `stdout`, `macos`, `webhook`, `openclaw` |
+| `notify.channels` | `["stdout"]` | Alert channels: `stdout`, `macos`, `webhook`, `ntfy`, `openclaw` |
 | `notify.min_severity` | `medium` | Minimum severity to alert on |
 | `notify.webhook.url` | `null` | Webhook URL for alert delivery |
+| `notify.ntfy.url` | `null` | ntfy topic URL (e.g. `https://ntfy.sh/prowl-alerts`) |
+| `notify.ntfy.token` | `null` | Bearer token for ACL-protected ntfy topics |
 | `scan.batch_lines` | `20` | Lines per analysis batch |
 | `scan.include_logs` | `true` | Also watch `~/.openclaw/logs/` |
 | `s3.logs.enabled` | `false` | Enable S3 log shipping |
@@ -193,6 +195,7 @@ Each finding includes a severity level (`low`, `medium`, `high`, `critical`), a 
 - **stdout** — formatted console output with color-coded severity
 - **macos** — native macOS notifications via Notification Center
 - **webhook** — HTTP POST with JSON alert payload to any URL
+- **ntfy** — push notifications via [ntfy](https://ntfy.sh) to any device (phone, browser, desktop). Self-hostable or use the public ntfy.sh server
 - **openclaw** — OpenClaw integration (planned)
 
 Configure with:
@@ -202,6 +205,20 @@ prowl config set notify.channels '["stdout","macos","webhook"]'
 prowl config set notify.webhook.url https://hooks.slack.com/services/...
 prowl config set notify.min_severity high
 ```
+
+### ntfy
+
+[ntfy](https://ntfy.sh) lets you receive Prowl alerts on any device — Mac, phone, or browser — even when you're away from the machine running Prowl.
+
+```bash
+prowl config set notify.channels '["stdout","ntfy"]'
+prowl config set notify.ntfy.url '"https://ntfy.sh/prowl-alerts"'
+
+# Optional: for ACL-protected topics
+prowl config set notify.ntfy.token '"tk_mytoken"'
+```
+
+Alerts are sent as plain-text POSTs with ntfy headers for title, priority, and emoji tags. Prowl severity maps to ntfy priority: low=2, medium=3, high=4, critical=5.
 
 ## S3 log shipping
 
