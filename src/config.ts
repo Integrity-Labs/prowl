@@ -28,6 +28,8 @@ const DEFAULT_CONFIG: ProwlConfig = {
     region: 'auto',
     prefix: 'prowl/',
     endpoint: null,
+    flush_interval_s: 60,
+    flush_max_bytes: 262144,
   },
   state_dir: DEFAULT_STATE_DIR,
 };
@@ -115,6 +117,8 @@ function validateConfig(config: ProwlConfig): ProwlConfig {
   if (!validSeverities.includes(config.notify.min_severity)) {
     config.notify.min_severity = 'medium';
   }
+  if (config.s3.flush_interval_s < 5) config.s3.flush_interval_s = 5;
+  if (config.s3.flush_max_bytes < 1024) config.s3.flush_max_bytes = 1024;
   return config;
 }
 

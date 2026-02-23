@@ -35,6 +35,9 @@ export class Daemon {
         region: config.s3.region,
         prefix: config.s3.prefix,
         endpoint: config.s3.endpoint,
+        flush_interval_s: config.s3.flush_interval_s,
+        flush_max_bytes: config.s3.flush_max_bytes,
+        onError: (err) => this.state.log(`S3 flush error: ${err}`),
       });
     }
   }
@@ -58,6 +61,10 @@ export class Daemon {
     this.watcher = new Watcher(this.config, (fp) => this.enqueueFile(fp));
     this.watcher.start();
 
+    if (this.shipper) {
+      this.shipper.startFlushing();
+    }
+
     console.log(`Prowl daemon running (pid=${process.pid})`);
     console.log(`  Model: ${this.config.model}`);
     console.log(`  Ollama: ${this.config.ollama.host}`);
@@ -79,6 +86,15 @@ export class Daemon {
       // Wait for in-flight processing to finish
       while (this.processing) {
         await new Promise((r) => setTimeout(r, 100));
+      }
+      // Flush remaining S3 buffers before exit
+      if (this.shipper) {
+        this.shipper.stopFlushing();
+        try {
+          await this.shipper.flushAll();
+        } catch (err) {
+          this.state.log(`S3 final flush error: ${err}`);
+        }
       }
       this.state.saveOffsets();
       this.state.removePid();
@@ -121,13 +137,9 @@ export class Daemon {
 
       if (lines.length === 0) return;
 
-      // Ship raw file to S3 if configured
+      // Buffer delta lines to S3 if configured
       if (this.shipper) {
-        try {
-          await this.shipper.ship(filePath);
-        } catch (err) {
-          this.state.log(`S3 ship error: ${err}`);
-        }
+        this.shipper.buffer(filePath, lines);
       }
 
       const name = path.basename(filePath);

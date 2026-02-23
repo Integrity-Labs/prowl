@@ -21,6 +21,8 @@ export interface ProwlConfig {
     region: string;
     prefix: string;
     endpoint: string | null;
+    flush_interval_s: number;
+    flush_max_bytes: number;
   };
   state_dir: string;
 }

@@ -2,14 +2,35 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
+interface BufferEntry {
+  lines: string[];
+  bytes: number;
+}
+
 export class S3Shipper {
   private client: S3Client;
   private bucket: string;
   private prefix: string;
+  private flushIntervalMs: number;
+  private flushMaxBytes: number;
+  private onError: ((err: unknown) => void) | null;
+  private buffers: Map<string, BufferEntry> = new Map();
+  private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(opts: { bucket: string; region: string; prefix: string; endpoint?: string | null }) {
+  constructor(opts: {
+    bucket: string;
+    region: string;
+    prefix: string;
+    endpoint?: string | null;
+    flush_interval_s?: number;
+    flush_max_bytes?: number;
+    onError?: (err: unknown) => void;
+  }) {
     this.bucket = opts.bucket;
     this.prefix = opts.prefix;
+    this.flushIntervalMs = (opts.flush_interval_s ?? 60) * 1000;
+    this.flushMaxBytes = opts.flush_max_bytes ?? 262144;
+    this.onError = opts.onError ?? null;
 
     const clientOpts: ConstructorParameters<typeof S3Client>[0] = {
       region: opts.region,
@@ -23,6 +44,7 @@ export class S3Shipper {
     this.client = new S3Client(clientOpts);
   }
 
+  /** One-shot full-file upload (used by `prowl ship <file>` CLI command). */
   async ship(filePath: string): Promise<void> {
     const body = fs.readFileSync(filePath);
     const key = this.buildKey(filePath);
@@ -35,10 +57,86 @@ export class S3Shipper {
     }));
   }
 
+  /** Append delta lines to the in-memory buffer. Flushes immediately if buffer exceeds max bytes. */
+  buffer(filePath: string, lines: string[]): void {
+    if (lines.length === 0) return;
+
+    let entry = this.buffers.get(filePath);
+    if (!entry) {
+      entry = { lines: [], bytes: 0 };
+      this.buffers.set(filePath, entry);
+    }
+
+    for (const line of lines) {
+      const lineBytes = Buffer.byteLength(line, 'utf-8') + 1; // +1 for newline
+      entry.lines.push(line);
+      entry.bytes += lineBytes;
+    }
+
+    if (entry.bytes >= this.flushMaxBytes) {
+      this.flush(filePath).catch((err) => this.handleError(err));
+    }
+  }
+
+  /** Flush buffered lines for a single file to S3 as a timestamped NDJSON chunk. */
+  async flush(filePath: string): Promise<void> {
+    const entry = this.buffers.get(filePath);
+    if (!entry || entry.lines.length === 0) return;
+
+    // Take the buffered lines and clear the buffer atomically
+    const lines = entry.lines;
+    this.buffers.set(filePath, { lines: [], bytes: 0 });
+
+    const body = lines.join('\n') + '\n';
+    const key = this.buildChunkKey(filePath);
+
+    await this.client.send(new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: body,
+      ContentType: 'application/x-ndjson',
+    }));
+  }
+
+  /** Flush all buffered files. Used on shutdown and by the periodic timer. */
+  async flushAll(): Promise<void> {
+    const paths = [...this.buffers.keys()];
+    for (const filePath of paths) {
+      try {
+        await this.flush(filePath);
+      } catch (err) {
+        this.handleError(err);
+      }
+    }
+  }
+
+  /** Start the periodic flush timer. */
+  startFlushing(): void {
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      this.flushAll().catch((err) => this.handleError(err));
+    }, this.flushIntervalMs);
+  }
+
+  /** Stop the periodic flush timer. */
+  stopFlushing(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
   private buildKey(filePath: string): string {
     const agent = this.extractAgent(filePath);
     const sessionFile = path.basename(filePath);
     return `${this.prefix}${agent}/${sessionFile}`;
+  }
+
+  private buildChunkKey(filePath: string): string {
+    const agent = this.extractAgent(filePath);
+    const sessionId = path.basename(filePath, path.extname(filePath));
+    const timestamp = Date.now();
+    return `${this.prefix}${agent}/${sessionId}/${timestamp}.ndjson`;
   }
 
   private extractAgent(filePath: string): string {
@@ -54,5 +152,11 @@ export class S3Shipper {
       }
     }
     return 'unknown';
+  }
+
+  private handleError(err: unknown): void {
+    if (this.onError) {
+      this.onError(err);
+    }
   }
 }
