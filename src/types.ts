@@ -24,6 +24,7 @@ export interface ProwlConfig {
     flush_interval_s: number;
     flush_max_bytes: number;
   };
+  redteam: RedTeamConfig;
   state_dir: string;
 }
 
@@ -122,6 +123,76 @@ export interface UsageEvent {
 
 export interface FileOffsets {
   [filePath: string]: number;
+}
+
+// --- Red-Team types ---
+
+export type AttackCategoryId =
+  | 'prompt_injection'
+  | 'information_extraction'
+  | 'social_engineering'
+  | 'jailbreaking'
+  | 'data_exfiltration';
+
+export interface AttackCategory {
+  id: AttackCategoryId;
+  name: string;
+  description: string;
+  goal: string;
+  examples: string[];
+}
+
+export interface RedTeamConfig {
+  categories: AttackCategoryId[];
+  attacks_per_category: number;
+  target_agent: string;
+  openclaw_timeout_s: number;
+  delay_between_attacks_s: number;
+  report_path: string;
+  daemon_interval_m: number;
+  local_mode: boolean;
+}
+
+export interface GeneratedAttack {
+  attack_prompt: string;
+  technique: string;
+  expected_behavior: string;
+}
+
+export interface JudgeVerdict {
+  success: boolean;
+  confidence: number;
+  reasoning: string;
+  severity: Severity;
+  indicators: string[];
+}
+
+export interface AttackResult {
+  id: string;
+  timestamp: string;
+  category: AttackCategoryId;
+  technique: string;
+  attack_prompt: string;
+  agent_response: string;
+  session_id: string;
+  target_agent: string;
+  verdict: JudgeVerdict;
+  duration_ms: number;
+  error?: string;
+}
+
+export interface RedTeamReport {
+  run_id: string;
+  timestamp: string;
+  target_agent: string;
+  model: string;
+  total_attacks: number;
+  successful_attacks: number;
+  failed_attacks: number;
+  errors: number;
+  defense_score: number;
+  results: AttackResult[];
+  duration_ms: number;
 }
 
 export interface DaemonStatus {

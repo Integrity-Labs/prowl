@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import type { ProwlConfig } from './types.js';
+import type { ProwlConfig, AttackCategoryId } from './types.js';
 
 const DEFAULT_STATE_DIR = path.join(os.homedir(), '.prowl');
 
@@ -30,6 +30,22 @@ const DEFAULT_CONFIG: ProwlConfig = {
     endpoint: null,
     flush_interval_s: 60,
     flush_max_bytes: 262144,
+  },
+  redteam: {
+    categories: [
+      'prompt_injection',
+      'information_extraction',
+      'social_engineering',
+      'jailbreaking',
+      'data_exfiltration',
+    ],
+    attacks_per_category: 2,
+    target_agent: 'main',
+    openclaw_timeout_s: 120,
+    delay_between_attacks_s: 5,
+    report_path: path.join(DEFAULT_STATE_DIR, 'redteam-report.jsonl'),
+    daemon_interval_m: 0,
+    local_mode: true,
   },
   state_dir: DEFAULT_STATE_DIR,
 };
@@ -119,6 +135,23 @@ function validateConfig(config: ProwlConfig): ProwlConfig {
   }
   if (config.s3.flush_interval_s < 5) config.s3.flush_interval_s = 5;
   if (config.s3.flush_max_bytes < 1024) config.s3.flush_max_bytes = 1024;
+
+  // Red-team validation
+  if (config.redteam) {
+    if (config.redteam.attacks_per_category < 1) config.redteam.attacks_per_category = 1;
+    if (config.redteam.openclaw_timeout_s < 10) config.redteam.openclaw_timeout_s = 10;
+    const validCategories: Set<string> = new Set([
+      'prompt_injection', 'information_extraction', 'social_engineering',
+      'jailbreaking', 'data_exfiltration',
+    ]);
+    config.redteam.categories = config.redteam.categories.filter(
+      (c: string) => validCategories.has(c),
+    ) as AttackCategoryId[];
+    if (config.redteam.categories.length === 0) {
+      config.redteam.categories = [...validCategories] as AttackCategoryId[];
+    }
+  }
+
   return config;
 }
 

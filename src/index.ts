@@ -9,7 +9,9 @@ import { Analyzer } from './analyzer.js';
 import { readNewLines, parseEvents, extractRelevantContent, batchLines, extractSessionId } from './processor.js';
 import { formatAlertForDisplay } from './alerter.js';
 import { S3Shipper } from './shipper.js';
-import type { ProwlConfig } from './types.js';
+import { RedTeamRunner } from './redteam/runner.js';
+import { RedTeamGenerator } from './redteam/generator.js';
+import type { ProwlConfig, AttackCategoryId } from './types.js';
 
 const program = new Command();
 
@@ -424,6 +426,65 @@ program
       for (const s of sorted) {
         console.log(`  ${s.id.slice(0, 12)}…  $${s.cost.toFixed(4)}  (${s.totalTokens.toLocaleString()} tokens, ${s.requests} req)`);
       }
+    }
+  });
+
+// --- redteam ---
+program
+  .command('redteam')
+  .description('Run red-team attacks against an OpenClaw agent')
+  .option('--agent <agent>', 'Target agent name')
+  .option('--model <model>', 'Ollama model to use')
+  .option('--categories <categories>', 'Comma-separated attack categories')
+  .option('--attacks <n>', 'Number of attacks per category', parseInt)
+  .option('--delay <seconds>', 'Delay between attacks in seconds', parseInt)
+  .option('--timeout <seconds>', 'OpenClaw CLI timeout in seconds', parseInt)
+  .option('--daemon', 'Run in daemon mode (loop continuously)')
+  .option('--interval <minutes>', 'Daemon loop interval in minutes', parseInt)
+  .option('--report <path>', 'Path to report JSONL file')
+  .option('--local', 'Force local mode (default)')
+  .option('--no-local', 'Disable local mode')
+  .option('--json', 'Output results as JSON')
+  .option('--verbose', 'Verbose output')
+  .action(async (opts) => {
+    const config = loadConfig();
+    if (opts.model) config.model = opts.model;
+    if (opts.report) config.redteam.report_path = opts.report;
+
+    // Check Ollama health
+    const generator = new RedTeamGenerator(config.ollama.host, config.model);
+    const healthy = await generator.checkHealth();
+    if (!healthy) {
+      console.error(`Cannot reach Ollama at ${config.ollama.host}`);
+      process.exit(1);
+    }
+
+    const categories = opts.categories
+      ? opts.categories.split(',').map((s: string) => s.trim()) as AttackCategoryId[]
+      : undefined;
+
+    const runner = new RedTeamRunner(config, {
+      verbose: opts.verbose,
+      json: opts.json,
+      categories,
+      attacksPerCategory: opts.attacks,
+      targetAgent: opts.agent,
+      delayBetweenAttacks: opts.delay,
+      openclawTimeout: opts.timeout,
+      localMode: opts.local,
+    });
+
+    if (opts.daemon) {
+      const interval = opts.interval ?? config.redteam.daemon_interval_m;
+      if (interval <= 0) {
+        console.error('Daemon mode requires --interval <minutes> (> 0)');
+        process.exit(1);
+      }
+      await runner.runDaemon(interval);
+    } else {
+      const report = await runner.runOnce();
+      runner.printSummary(report);
+      process.exit(report.successful_attacks > 0 ? 1 : 0);
     }
   });
 
